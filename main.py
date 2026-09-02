@@ -3,96 +3,199 @@ import os
 import msvcrt
 import time
 
-# -----------------------------
-# 1. Set up the music file path
-# -----------------------------
 
-music_file = os.path.join("music", "test.mp3")
+# ==========================================
+# 1. FIND SONGS
+# ==========================================
 
-# Check if the file exists
-if not os.path.exists(music_file):
-    print("Error: test.mp3 was not found in the music folder.")
+music_folder = "music"
+supported_formats = (".mp3", ".wav", ".ogg")
+
+songs = []
+
+for file in os.listdir(music_folder):
+    if file.lower().endswith(supported_formats):
+        songs.append(file)
+
+songs.sort()
+
+
+# ==========================================
+# 2. CHECK FOR EMPTY MUSIC FOLDER
+# ==========================================
+
+if len(songs) == 0:
+    print("No supported music files found in the music folder.")
     input("Press ENTER to exit...")
     exit()
 
 
-# -----------------------------
-# 2. Initialize pygame audio
-# -----------------------------
+# ==========================================
+# 3. INITIALIZE PYGAME AUDIO
+# ==========================================
 
+pygame.init()
 pygame.mixer.init()
 
 
-# -----------------------------
-# 3. Load the song
-# -----------------------------
+# ==========================================
+# 4. CREATE SONG-FINISHED EVENT
+# ==========================================
 
-try:
-    pygame.mixer.music.load(music_file)
+SONG_FINISHED = pygame.USEREVENT + 1
 
-except pygame.error:
-    print("Error: pygame could not load test.mp3.")
-    input("Press ENTER to exit...")
+pygame.mixer.music.set_endevent(SONG_FINISHED)
+
+
+# ==========================================
+# 5. CURRENT SONG
+# ==========================================
+
+current_song = 0
+paused = False
+running = True
+
+
+# ==========================================
+# 6. PLAY SONG FUNCTION
+# ==========================================
+
+def play_song(index):
+
+    song_path = os.path.join(
+        music_folder,
+        songs[index]
+    )
+
+    try:
+        pygame.mixer.music.load(song_path)
+        pygame.mixer.music.play()
+
+        print("Now playing:", songs[index])
+
+        return True
+
+    except pygame.error as error:
+        print("Could not play:", songs[index])
+        print("Error:", error)
+
+        return False
+
+
+# ==========================================
+# 7. START FIRST SONG
+# ==========================================
+
+if not play_song(current_song):
+
     pygame.mixer.quit()
+    pygame.quit()
+
+    input("Press ENTER to exit...")
     exit()
 
 
-# -----------------------------
-# 4. Start playing
-# -----------------------------
+# ==========================================
+# 8. SHOW CONTROLS
+# ==========================================
 
-pygame.mixer.music.play()
-
-print("Now playing: test.mp3")
 print()
+print("==============================")
+print("         ECHO POD M2")
+print("==============================")
+print("N     = Next song")
+print("P     = Previous song")
 print("SPACE = Pause / Resume")
 print("ESC   = Stop and Exit")
+print("==============================")
+print()
 
 
-# -----------------------------
-# 5. Keep the program running
-# -----------------------------
-
-running = True
-paused = False
+# ==========================================
+# 9. MAIN LOOP
+# ==========================================
 
 while running:
 
-    # Check if a key has been pressed
+    # --------------------------------------
+    # CHECK KEYBOARD
+    # --------------------------------------
+
     if msvcrt.kbhit():
 
         key = msvcrt.getch()
 
-        # ESC key
-        if key == b'\x1b':
-            pygame.mixer.music.stop()
-            running = False
 
-        # SPACE key
+        # NEXT
+        if key in (b'n', b'N'):
+
+            current_song = (current_song + 1) % len(songs)
+
+            play_song(current_song)
+
+            paused = False
+
+
+        # PREVIOUS
+        elif key in (b'p', b'P'):
+
+            current_song = (current_song - 1) % len(songs)
+
+            play_song(current_song)
+
+            paused = False
+
+
+        # SPACE
         elif key == b' ':
 
             if paused:
+
                 pygame.mixer.music.unpause()
                 paused = False
+
                 print("Resumed")
 
             else:
+
                 pygame.mixer.music.pause()
                 paused = True
+
                 print("Paused")
 
-    # Stop when the song finishes naturally
-    if not paused and not pygame.mixer.music.get_busy():
-        running = False
 
-    # Small delay so the loop doesn't use 100% CPU
+        # ESC
+        elif key == b'\x1b':
+
+            pygame.mixer.music.stop()
+            running = False
+
+
+    # --------------------------------------
+    # CHECK PYGAME EVENTS
+    # --------------------------------------
+
+    for event in pygame.event.get():
+
+        if event.type == SONG_FINISHED:
+
+            current_song = (current_song + 1) % len(songs)
+
+            play_song(current_song)
+
+            paused = False
+
+
+    # Prevent excessive CPU usage
     time.sleep(0.01)
 
 
-# -----------------------------
-# 6. Clean up
-# -----------------------------
+# ==========================================
+# 10. CLEAN UP
+# ==========================================
 
+pygame.mixer.music.stop()
 pygame.mixer.quit()
+pygame.quit()
 
 print("Echo Pod stopped.")
