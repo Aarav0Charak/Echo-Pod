@@ -2,6 +2,7 @@ import pygame
 import os
 import msvcrt
 import time
+import random
 from mutagen import File
 
 
@@ -15,7 +16,6 @@ supported_formats = (".mp3", ".wav", ".ogg")
 songs = []
 
 for file in os.listdir(music_folder):
-
     if file.lower().endswith(supported_formats):
         songs.append(file)
 
@@ -27,8 +27,7 @@ songs.sort()
 # ==========================================
 
 if len(songs) == 0:
-
-    print("No music files found in the music folder.")
+    print("No music files found.")
     input("Press ENTER to exit...")
     exit()
 
@@ -54,14 +53,25 @@ pygame.mixer.music.set_endevent(SONG_FINISHED)
 # 5. PLAYER STATE
 # ==========================================
 
+# Original library
+songs = songs.copy()
+
+# Current playback order
+play_order = songs.copy()
+
 current_song = 0
+
 paused = False
 running = True
+
+loop = False
+shuffle = False
 
 song_duration = 0
 
 last_status_update = 0
-status_was_paused = False
+
+display_started = False
 
 
 # ==========================================
@@ -91,6 +101,9 @@ def get_song_duration(filename):
 
 def format_time(seconds):
 
+    if seconds < 0:
+        seconds = 0
+
     minutes = seconds // 60
     seconds = seconds % 60
 
@@ -98,102 +111,249 @@ def format_time(seconds):
 
 
 # ==========================================
-# 8. PLAY CURRENT SONG
+# 8. UPDATE ECHO POD DISPLAY
 # ==========================================
 
-def play_current_song():
+def update_display():
+
+    global last_status_update
+    global display_started
+
+    position = pygame.mixer.music.get_pos() // 1000
+
+    if position < 0:
+        position = 0
+
+    filename = play_order[current_song]
+
+    # --------------------------------------
+    # LOOP / SHUFFLE ICONS
+    # --------------------------------------
+
+    icons = ""
+
+    if loop:
+        icons += "🔁 LOOP   "
+
+    if shuffle:
+        icons += "🔀 SHUFFLE"
+
+    # --------------------------------------
+    # PLAYBACK STATE
+    # --------------------------------------
+
+    if paused:
+        playback_state = "PAUSED"
+    else:
+        playback_state = "PLAYING"
+
+    # --------------------------------------
+    # MOVE CURSOR BACK TO DISPLAY
+    # --------------------------------------
+
+    if display_started:
+
+        # Move up 4 lines
+        print("\033[4A", end="")
+
+    # --------------------------------------
+    # PRINT THE 4 DISPLAY LINES
+    # --------------------------------------
+
+    print(
+        f"\r\033[K{icons}"
+    )
+
+    print(
+        f"\r\033[K{playback_state}"
+    )
+
+    print(
+        f"\r\033[K{filename}"
+    )
+
+    print(
+        f"\r\033[K{format_time(position)} / "
+        f"{format_time(song_duration)}"
+    )
+
+    display_started = True
+
+    last_status_update = time.time()
+
+
+# ==========================================
+# 9. PLAY SONG
+# ==========================================
+
+def play_song():
 
     global song_duration
     global paused
-    global status_was_paused
     global last_status_update
 
-    song_path = os.path.join(
-        music_folder,
-        songs[current_song]
-    )
+    filename = play_order[current_song]
+
+    path = os.path.join(music_folder, filename)
 
     try:
 
+        # Clear old song-finished events
         pygame.event.clear(SONG_FINISHED)
 
-        pygame.mixer.music.load(song_path)
+        pygame.mixer.music.load(path)
         pygame.mixer.music.play()
 
         paused = False
 
-        song_duration = get_song_duration(
-            songs[current_song]
-        )
+        song_duration = get_song_duration(filename)
 
-        status_was_paused = False
         last_status_update = 0
-
-        print()
-        print("Now playing:", songs[current_song])
 
         return True
 
-    except pygame.error as error:
-
-        print("Could not play:", songs[current_song])
-        print("Error:", error)
+    except pygame.error:
 
         return False
 
 
 # ==========================================
-# 9. NEXT SONG
+# 10. NEXT SONG
 # ==========================================
 
 def next_song():
 
     global current_song
+    global running
 
-    current_song = (current_song + 1) % len(songs)
+    if current_song < len(play_order) - 1:
 
-    play_current_song()
+        current_song += 1
+
+        if play_song():
+            update_display()
+
+    else:
+
+        if loop:
+
+            current_song = 0
+
+            if play_song():
+                update_display()
+
+        else:
+
+            pygame.mixer.music.stop()
+
+            running = False
 
 
 # ==========================================
-# 10. PREVIOUS SONG
+# 11. PREVIOUS SONG
 # ==========================================
 
 def previous_song():
 
     global current_song
 
-    current_song = (current_song - 1) % len(songs)
+    if current_song > 0:
 
-    play_current_song()
+        current_song -= 1
+
+    else:
+
+        if loop:
+            current_song = len(play_order) - 1
+        else:
+            current_song = 0
+
+    if play_song():
+        update_display()
 
 
 # ==========================================
-# 11. PAUSE / RESUME
+# 12. PAUSE / RESUME
 # ==========================================
 
 def toggle_pause():
 
     global paused
-    global status_was_paused
 
     if paused:
 
         pygame.mixer.music.unpause()
-
         paused = False
-        status_was_paused = False
 
     else:
 
         pygame.mixer.music.pause()
-
         paused = True
-        status_was_paused = False
+
+    update_display()
 
 
 # ==========================================
-# 12. GET KEYBOARD COMMAND
+# 13. TOGGLE LOOP
+# ==========================================
+
+def toggle_loop():
+
+    global loop
+
+    loop = not loop
+
+    update_display()
+
+
+# ==========================================
+# 14. TOGGLE SHUFFLE
+# ==========================================
+
+def toggle_shuffle():
+
+    global shuffle
+    global play_order
+    global current_song
+
+    # Remember current song
+    current_filename = play_order[current_song]
+
+    # --------------------------------------
+    # SHUFFLE ON
+    # --------------------------------------
+
+    if not shuffle:
+
+        shuffle = True
+
+        play_order = songs.copy()
+
+        random.shuffle(play_order)
+
+        # Keep current song first
+        play_order.remove(current_filename)
+        play_order.insert(0, current_filename)
+
+        current_song = 0
+
+    # --------------------------------------
+    # SHUFFLE OFF
+    # --------------------------------------
+
+    else:
+
+        shuffle = False
+
+        play_order = songs.copy()
+
+        current_song = play_order.index(current_filename)
+
+    update_display()
+
+
+# ==========================================
+# 15. KEYBOARD INPUT
 # ==========================================
 
 def get_command():
@@ -206,23 +366,29 @@ def get_command():
     if key in (b'n', b'N'):
         return "next"
 
-    if key in (b'p', b'P'):
+    elif key in (b'p', b'P'):
         return "previous"
 
-    if key == b' ':
+    elif key == b' ':
         return "pause"
 
-    if key == b'\x1b':
+    elif key in (b'l', b'L'):
+        return "loop"
+
+    elif key in (b's', b'S'):
+        return "shuffle"
+
+    elif key == b'\x1b':
         return "exit"
 
     return None
 
 
 # ==========================================
-# 13. START FIRST SONG
+# 16. START FIRST SONG
 # ==========================================
 
-if not play_current_song():
+if not play_song():
 
     pygame.mixer.quit()
     pygame.quit()
@@ -232,111 +398,103 @@ if not play_current_song():
 
 
 # ==========================================
-# 14. DISPLAY CONTROLS
+# 17. CONTROLS
 # ==========================================
 
-print()
 print("================================")
 print("          ECHO POD M3")
 print("================================")
 print("N     = Next")
 print("P     = Previous")
 print("SPACE = Pause / Resume")
+print("L     = Loop ON / OFF")
+print("S     = Shuffle ON / OFF")
 print("ESC   = Exit")
 print("================================")
 print()
 
 
 # ==========================================
-# 15. MAIN LOOP
+# 18. INITIAL DISPLAY
+# ==========================================
+
+update_display()
+
+
+# ==========================================
+# 19. MAIN LOOP
 # ==========================================
 
 while running:
 
     # --------------------------------------
-    # Keyboard input
+    # KEYBOARD
     # --------------------------------------
 
     command = get_command()
-
 
     if command == "next":
 
         next_song()
 
-
     elif command == "previous":
 
         previous_song()
-
 
     elif command == "pause":
 
         toggle_pause()
 
+    elif command == "loop":
+
+        toggle_loop()
+
+    elif command == "shuffle":
+
+        toggle_shuffle()
 
     elif command == "exit":
 
+        pygame.event.clear(SONG_FINISHED)
+
         pygame.mixer.music.stop()
+
         running = False
+
+        break
 
 
     # --------------------------------------
-    # Song finished naturally
+    # SONG FINISHED
     # --------------------------------------
 
     for event in pygame.event.get():
 
         if event.type == SONG_FINISHED:
 
-            next_song()
+            if running and not paused:
+
+                next_song()
 
 
     # --------------------------------------
-    # Update timer
+    # TIMER UPDATE
     # --------------------------------------
 
-    current_time = time.time()
+    if running:
 
-    if paused:
-
-        if not status_was_paused:
-
-            position = pygame.mixer.music.get_pos() // 1000
-
-            print(
-                f"\rPAUSED  | {format_time(position)} / "
-                f"{format_time(song_duration)}",
-                end="",
-                flush=True
-            )
-
-            status_was_paused = True
-
-    else:
-
-        status_was_paused = False
+        current_time = time.time()
 
         if current_time - last_status_update >= 1:
 
-            position = pygame.mixer.music.get_pos() // 1000
-
-            print(
-                f"\rPLAYING | {format_time(position)} / "
-                f"{format_time(song_duration)}",
-                end="",
-                flush=True
-            )
-
-            last_status_update = current_time
+            update_display()
 
 
-    # Small delay
     time.sleep(0.01)
 
 
 # ==========================================
-# 16. CLEAN UP
+# 20. CLEAN UP
 # ==========================================
 
 pygame.mixer.music.stop()
