@@ -20,6 +20,22 @@ for file in os.listdir(music_folder):
         songs.append(file)
 
 songs.sort()
+# ==========================================
+# MANUAL SONG FIXES
+# ==========================================
+
+song_overrides = {
+
+    "Loving Machine - TV Girl.mp3": {
+        "title": "Loving Machine",
+        "artist": "TV Girl"
+    },
+
+    "Frank Ocean - American Wedding (Lyrics).mp3": {
+        "title": "American Wedding",
+        "artist": "Frank Ocean"
+    }
+}
 
 
 # ==========================================
@@ -45,7 +61,6 @@ pygame.mixer.init()
 # ==========================================
 
 SONG_FINISHED = pygame.USEREVENT + 1
-
 pygame.mixer.music.set_endevent(SONG_FINISHED)
 
 
@@ -53,10 +68,6 @@ pygame.mixer.music.set_endevent(SONG_FINISHED)
 # 5. PLAYER STATE
 # ==========================================
 
-# Original library
-songs = songs.copy()
-
-# Current playback order
 play_order = songs.copy()
 
 current_song = 0
@@ -73,26 +84,77 @@ last_status_update = 0
 
 display_started = False
 
+# Used to ignore stale/instant end events
+song_started_at = 0
+
 
 # ==========================================
-# 6. GET SONG DURATION
+# 6. GET SONG INFORMATION
 # ==========================================
 
-def get_song_duration(filename):
+def get_song_info(filename):
 
     path = os.path.join(music_folder, filename)
 
+    title = None
+    artist = None
+    album = None
+    duration = 0
+
+
+    # ======================================
+    # READ METADATA
+    # ======================================
+
     try:
 
-        audio = File(path)
+        audio = File(path, easy=True)
 
         if audio is not None:
-            return int(audio.info.length)
+
+            if audio.get("title"):
+                title = audio.get("title")[0]
+
+            if audio.get("artist"):
+                artist = audio.get("artist")[0]
+
+            if audio.get("album"):
+                album = audio.get("album")[0]
+
+            if audio.info:
+                duration = int(audio.info.length)
 
     except Exception:
         pass
 
-    return 0
+
+    # ======================================
+    # MANUAL OVERRIDE
+    # ======================================
+
+    if filename in song_overrides:
+
+        override = song_overrides[filename]
+
+        title = override.get("title", title)
+        artist = override.get("artist", artist)
+
+
+    # ======================================
+    # SAFE FALLBACK
+    # ======================================
+
+    if not title:
+        title = os.path.splitext(filename)[0]
+
+    if not artist:
+        artist = "Unknown Artist"
+
+    if not album:
+        album = "Unknown Album"
+
+
+    return title, artist, album, duration
 
 
 # ==========================================
@@ -111,7 +173,28 @@ def format_time(seconds):
 
 
 # ==========================================
-# 8. UPDATE ECHO POD DISPLAY
+# 8. CLEAR OLD DISPLAY
+# ==========================================
+
+def clear_display():
+
+    global display_started
+
+    if display_started:
+
+        # Move to first line of our display
+        print("\033[5A", end="")
+
+        # Clear all 5 lines
+        for _ in range(5):
+            print("\033[K")
+        
+        # Move back to first line
+        print("\033[5A", end="")
+
+
+# ==========================================
+# 9. UPDATE ECHO POD DISPLAY
 # ==========================================
 
 def update_display():
@@ -124,10 +207,16 @@ def update_display():
     if position < 0:
         position = 0
 
+
     filename = play_order[current_song]
 
+    title, artist, album, duration = get_song_info(filename)
+
+    song_duration = duration
+
+
     # --------------------------------------
-    # LOOP / SHUFFLE ICONS
+    # STATUS ICONS
     # --------------------------------------
 
     icons = ""
@@ -138,52 +227,49 @@ def update_display():
     if shuffle:
         icons += "🔀 SHUFFLE"
 
+
     # --------------------------------------
     # PLAYBACK STATE
     # --------------------------------------
 
     if paused:
-        playback_state = "PAUSED"
+        state = "PAUSED"
     else:
-        playback_state = "PLAYING"
+        state = "PLAYING"
+
 
     # --------------------------------------
-    # MOVE CURSOR BACK TO DISPLAY
+    # MOVE DISPLAY UP
     # --------------------------------------
 
     if display_started:
+        print("\033[5A", end="")
 
-        # Move up 4 lines
-        print("\033[4A", end="")
 
     # --------------------------------------
-    # PRINT THE 4 DISPLAY LINES
+    # FIVE DISPLAY LINES
     # --------------------------------------
 
-    print(
-        f"\r\033[K{icons}"
-    )
+    print(f"\r\033[K{icons}")
 
-    print(
-        f"\r\033[K{playback_state}"
-    )
+    print(f"\r\033[K{state}")
 
-    print(
-        f"\r\033[K{filename}"
-    )
+    print(f"\r\033[KSong: {title}")
+
+    print(f"\r\033[KArtist: {artist}")
 
     print(
         f"\r\033[K{format_time(position)} / "
         f"{format_time(song_duration)}"
     )
 
-    display_started = True
 
+    display_started = True
     last_status_update = time.time()
 
 
 # ==========================================
-# 9. PLAY SONG
+# 10. PLAY CURRENT SONG
 # ==========================================
 
 def play_song():
@@ -191,34 +277,44 @@ def play_song():
     global song_duration
     global paused
     global last_status_update
+    global song_started_at
 
     filename = play_order[current_song]
 
     path = os.path.join(music_folder, filename)
+
 
     try:
 
         # Clear old song-finished events
         pygame.event.clear(SONG_FINISHED)
 
+        # Load and play
         pygame.mixer.music.load(path)
         pygame.mixer.music.play()
 
         paused = False
 
-        song_duration = get_song_duration(filename)
+        title, artist, album, duration = get_song_info(filename)
+
+        song_duration = duration
 
         last_status_update = 0
 
         return True
 
-    except pygame.error:
+
+    except pygame.error as error:
+
+        print()
+        print("Could not play:", filename)
+        print("Error:", error)
 
         return False
 
 
 # ==========================================
-# 10. NEXT SONG
+# 11. NEXT SONG
 # ==========================================
 
 def next_song():
@@ -250,7 +346,7 @@ def next_song():
 
 
 # ==========================================
-# 11. PREVIOUS SONG
+# 12. PREVIOUS SONG
 # ==========================================
 
 def previous_song():
@@ -265,6 +361,7 @@ def previous_song():
 
         if loop:
             current_song = len(play_order) - 1
+
         else:
             current_song = 0
 
@@ -273,7 +370,7 @@ def previous_song():
 
 
 # ==========================================
-# 12. PAUSE / RESUME
+# 13. PAUSE / RESUME
 # ==========================================
 
 def toggle_pause():
@@ -294,7 +391,7 @@ def toggle_pause():
 
 
 # ==========================================
-# 13. TOGGLE LOOP
+# 14. TOGGLE LOOP
 # ==========================================
 
 def toggle_loop():
@@ -307,7 +404,7 @@ def toggle_loop():
 
 
 # ==========================================
-# 14. TOGGLE SHUFFLE
+# 15. TOGGLE SHUFFLE
 # ==========================================
 
 def toggle_shuffle():
@@ -316,8 +413,8 @@ def toggle_shuffle():
     global play_order
     global current_song
 
-    # Remember current song
     current_filename = play_order[current_song]
+
 
     # --------------------------------------
     # SHUFFLE ON
@@ -337,6 +434,7 @@ def toggle_shuffle():
 
         current_song = 0
 
+
     # --------------------------------------
     # SHUFFLE OFF
     # --------------------------------------
@@ -349,11 +447,16 @@ def toggle_shuffle():
 
         current_song = play_order.index(current_filename)
 
+
+    # IMPORTANT:
+    # Do NOT restart the song.
+    # Only change the order.
+
     update_display()
 
 
 # ==========================================
-# 15. KEYBOARD INPUT
+# 16. KEYBOARD INPUT
 # ==========================================
 
 def get_command():
@@ -362,6 +465,7 @@ def get_command():
         return None
 
     key = msvcrt.getch()
+
 
     if key in (b'n', b'N'):
         return "next"
@@ -381,11 +485,12 @@ def get_command():
     elif key == b'\x1b':
         return "exit"
 
+
     return None
 
 
 # ==========================================
-# 16. START FIRST SONG
+# 17. START FIRST SONG
 # ==========================================
 
 if not play_song():
@@ -398,11 +503,11 @@ if not play_song():
 
 
 # ==========================================
-# 17. CONTROLS
+# 18. CONTROLS
 # ==========================================
 
 print("================================")
-print("          ECHO POD M3")
+print("          ECHO POD M4")
 print("================================")
 print("N     = Next")
 print("P     = Previous")
@@ -415,17 +520,18 @@ print()
 
 
 # ==========================================
-# 18. INITIAL DISPLAY
+# 19. INITIAL DISPLAY
 # ==========================================
 
 update_display()
 
 
 # ==========================================
-# 19. MAIN LOOP
+# 20. MAIN LOOP
 # ==========================================
 
 while running:
+
 
     # --------------------------------------
     # KEYBOARD
@@ -433,25 +539,31 @@ while running:
 
     command = get_command()
 
+
     if command == "next":
 
         next_song()
+
 
     elif command == "previous":
 
         previous_song()
 
+
     elif command == "pause":
 
         toggle_pause()
+
 
     elif command == "loop":
 
         toggle_loop()
 
+
     elif command == "shuffle":
 
         toggle_shuffle()
+
 
     elif command == "exit":
 
@@ -472,13 +584,17 @@ while running:
 
         if event.type == SONG_FINISHED:
 
-            if running and not paused:
+            # Ignore an event that appears immediately
+            # after starting a new song.
+            if time.time() - song_started_at < 0.5:
+                continue
 
+            if running and not paused:
                 next_song()
 
 
     # --------------------------------------
-    # TIMER UPDATE
+    # TIMER
     # --------------------------------------
 
     if running:
@@ -494,11 +610,13 @@ while running:
 
 
 # ==========================================
-# 20. CLEAN UP
+# 21. CLEAN UP
 # ==========================================
 
 pygame.mixer.music.stop()
+
 pygame.mixer.quit()
+
 pygame.quit()
 
 print()
